@@ -12,11 +12,11 @@ hospital_datasets = {}  # Cache loaded hospital datasets
 
 
 class Net(nn.Module):
-    """Starting point: ResNet18-based model for binary chest X-ray classification."""
+    """ResNet34-based model for binary chest X-ray classification."""
 
     def __init__(self):
         super(Net, self).__init__()
-        self.model = models.resnet18(weights=None)
+        self.model = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
         # Adapt to grayscale input
         self.model.conv1 = nn.Conv2d(
             in_channels=1,
@@ -76,7 +76,13 @@ def load_data(
 
     data = hospital_datasets[cache_key]
     shuffle = (split_name == "train")  # shuffle only for training splits
-    dataloader = DataLoader(data, batch_size=batch_size, shuffle=shuffle, num_workers=4, collate_fn=collate_preprocessed)
+    dataloader = DataLoader(
+        data,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=4,
+        collate_fn=collate_preprocessed,
+    )
     return dataloader
 
 
