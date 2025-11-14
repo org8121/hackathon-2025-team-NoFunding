@@ -67,7 +67,7 @@ def main(grid: Grid, context: Context) -> None:
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord({"lr": lr}),
+        train_config=ConfigRecord({"lr": lr, "local_epochs": local_epochs}),
         num_rounds=num_rounds,
     )
 
