@@ -48,7 +48,7 @@ def evaluate_split(model, dataset_name, split_name, device):
 @app.main()
 def main(grid: Grid, context: Context) -> None:
     # Log GPU device
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
     log(INFO, f"Device: {device}")
 
     num_rounds: int = context.run_config["num-server-rounds"]
@@ -80,7 +80,7 @@ def main(grid: Grid, context: Context) -> None:
     arrays = ArrayRecord(global_model.state_dict())
 
     #Evaluate starting global model here
-    for display_name, dataset_name, split_name in datasets_to_test:
+    '''for display_name, dataset_name, split_name in datasets_to_test:
         try:
             probs, labels = evaluate_split(global_model, dataset_name, split_name, device)
             n = len(labels)
@@ -92,7 +92,7 @@ def main(grid: Grid, context: Context) -> None:
         except FileNotFoundError:
             # Test dataset doesn't exist for participants - skip silently
             pass
-
+'''
     strategy = HackathonFedAvg(fraction_train=1, run_name=run_name)
     result = strategy.start(
         grid=grid,
