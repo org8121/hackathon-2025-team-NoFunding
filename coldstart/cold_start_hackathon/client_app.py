@@ -24,6 +24,7 @@ def train(msg: Message, context: Context):
     # Load the data
     partition_id = context.node_config["partition-id"]
     dataset_name = f"Hospital{PARTITION_HOSPITAL_MAP[partition_id]}"
+    print(f"Running training on dataset: {dataset_name}")
     image_size = context.run_config["image-size"]
     trainloader = load_data(dataset_name, "train", image_size=image_size)
 

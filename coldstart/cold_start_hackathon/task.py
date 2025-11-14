@@ -17,10 +17,23 @@ from tqdm import tqdm
 hospital_datasets = {}  # Cache loaded hospital datasets
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Return True if the environment variable is set to a truthy value."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
 class Net(nn.Module):
     """DenseNet-121 head suitable for Chest X-ray fine-tuning."""
 
-    def __init__(self, pretrained: bool = True, checkpoint_path: Optional[str] = None):
+    def __init__(
+        self,
+        pretrained: bool = True,
+        checkpoint_path: Optional[str] = None,
+        train_backbone: Optional[bool] = None,
+    ):
         super().__init__()
 
         use_torchvision_weights = (
@@ -53,6 +66,14 @@ class Net(nn.Module):
         checkpoint_path = checkpoint_path or os.environ.get("CHESTXRAY_PRETRAINED")
         if checkpoint_path:
             self._load_checkpoint(checkpoint_path)
+
+        if train_backbone is None:
+            train_backbone = _env_flag("TRAIN_BACKBONE", default=False)
+
+        if not train_backbone:
+            for name, param in self.model.named_parameters():
+                if not name.startswith("classifier"):
+                    param.requires_grad = False
 
     def _load_checkpoint(self, checkpoint_path: str) -> None:
         if not os.path.isfile(checkpoint_path):
@@ -133,7 +154,7 @@ def load_data(
 def train(net, trainloader, epochs, lr, device):
     net.to(device)
     criterion = torch.nn.BCEWithLogitsLoss().to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    optimizer = torch.optim.Adam((p for p in net.parameters() if p.requires_grad), lr=lr)
     net.train()
     running_loss = 0.0
     for _ in range(epochs):
