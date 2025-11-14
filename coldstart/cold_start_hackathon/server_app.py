@@ -31,6 +31,9 @@ WANDB_PROJECT = os.environ.get("WANDB_PROJECT", None)  # Your W&B project name
 app = ServerApp()
 
 datasets_to_test = [
+        ("Hospital A", "HospitalA", "eval"),
+        ("Hospital B", "HospitalB", "eval"),
+        ("Hospital C", "HospitalC", "eval"),
         ("Test D (OOD)", "Test", "test_D"),
     ]
 
