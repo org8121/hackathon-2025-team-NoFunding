@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 import numpy as np
 import torch
@@ -6,29 +7,78 @@ import torch.nn as nn
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from torchvision import models
+
+try:
+    from torchvision.models import DenseNet121_Weights
+except (ImportError, AttributeError):
+    DenseNet121_Weights = None
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
 
 
 class Net(nn.Module):
-    """Starting point: ResNet18-based model for binary chest X-ray classification."""
+    """DenseNet-121 head suitable for Chest X-ray fine-tuning."""
 
-    def __init__(self):
-        super(Net, self).__init__()
-        self.model = models.resnet18(weights=None)
-        # Adapt to grayscale input
-        self.model.conv1 = nn.Conv2d(
+    def __init__(self, pretrained: bool = True, checkpoint_path: Optional[str] = None):
+        super().__init__()
+
+        use_torchvision_weights = (
+            pretrained and checkpoint_path is None and DenseNet121_Weights is not None
+        )
+        weights = DenseNet121_Weights.DEFAULT if use_torchvision_weights else None
+        try:
+            self.model = models.densenet121(weights=weights)
+        except TypeError:
+            self.model = models.densenet121(pretrained=use_torchvision_weights)
+
+        conv0 = self.model.features.conv0
+        self.model.features.conv0 = nn.Conv2d(
             in_channels=1,
-            out_channels=64,
-            kernel_size=7,
-            stride=2,
-            padding=3,
+            out_channels=conv0.out_channels,
+            kernel_size=conv0.kernel_size,
+            stride=conv0.stride,
+            padding=conv0.padding,
             bias=False,
         )
-        # Binary classification head (single logit)
-        in_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(in_features, 1)
+        if use_torchvision_weights:
+            with torch.no_grad():
+                self.model.features.conv0.weight.copy_(conv0.weight.mean(dim=1, keepdim=True))
+        else:
+            nn.init.kaiming_normal_(self.model.features.conv0.weight, mode="fan_out", nonlinearity="relu")
+
+        in_features = self.model.classifier.in_features
+        self.model.classifier = nn.Linear(in_features, 1)
+
+        checkpoint_path = checkpoint_path or os.environ.get("CHESTXRAY_PRETRAINED")
+        if checkpoint_path:
+            self._load_checkpoint(checkpoint_path)
+
+    def _load_checkpoint(self, checkpoint_path: str) -> None:
+        if not os.path.isfile(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        state_dict = checkpoint.get("state_dict", checkpoint)
+
+        normalized_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key
+            if new_key.startswith("module."):
+                new_key = new_key[len("module."):]
+            if new_key.startswith("model."):
+                new_key = new_key[len("model."):]
+            normalized_state_dict[new_key] = value
+
+        conv_key = "features.conv0.weight"
+        if conv_key in normalized_state_dict and normalized_state_dict[conv_key].shape[1] != 1:
+            normalized_state_dict[conv_key] = normalized_state_dict[conv_key].mean(dim=1, keepdim=True)
+
+        incompatible = self.model.load_state_dict(normalized_state_dict, strict=False)
+        if incompatible.missing_keys:
+            print(f"DenseNet checkpoint missing keys: {incompatible.missing_keys}")
+        if incompatible.unexpected_keys:
+            print(f"DenseNet checkpoint unexpected keys: {incompatible.unexpected_keys}")
 
     def forward(self, x):
         return self.model(x)  # No sigmoid, using BCEWithLogitsLoss

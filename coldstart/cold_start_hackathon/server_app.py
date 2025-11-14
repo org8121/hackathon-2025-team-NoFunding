@@ -7,6 +7,8 @@ from flwr.app import ArrayRecord, ConfigRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
+from cold_start_hackathon.task import Net, load_data, test
+from sklearn.metrics import roc_auc_score
 
 from cold_start_hackathon.task import Net
 from cold_start_hackathon.util import (
@@ -27,6 +29,17 @@ WANDB_PROJECT = os.environ.get("WANDB_PROJECT", None)  # Your W&B project name
 # ============================================================================
 
 app = ServerApp()
+
+datasets_to_test = [
+        ("Test D (OOD)", "Test", "test_D"),
+    ]
+
+
+def evaluate_split(model, dataset_name, split_name, device):
+    """Evaluate on any dataset split and return predictions."""
+    loader = load_data(dataset_name, split_name, batch_size=32)
+    _, _, _, _, _, probs, labels = test(model, loader, device)
+    return probs, labels
 
 
 @app.main()
@@ -62,6 +75,20 @@ def main(grid: Grid, context: Context) -> None:
 
     global_model = Net()
     arrays = ArrayRecord(global_model.state_dict())
+
+    #Evaluate starting global model here
+    for display_name, dataset_name, split_name in datasets_to_test:
+        try:
+            probs, labels = evaluate_split(global_model, dataset_name, split_name, device)
+            n = len(labels)
+
+            # Compute per-dataset AUROC for display
+            auroc = roc_auc_score(labels, probs)
+            print(f"  {display_name:<15} AUROC: {auroc:.4f} (n={n})")
+
+        except FileNotFoundError:
+            # Test dataset doesn't exist for participants - skip silently
+            pass
 
     strategy = HackathonFedAvg(fraction_train=1, run_name=run_name)
     result = strategy.start(
