@@ -93,7 +93,7 @@ def main(grid: Grid, context: Context) -> None:
             # Test dataset doesn't exist for participants - skip silently
             pass
 '''
-    strategy = HackathonFedAvg(fraction_train=1, run_name=run_name)
+    strategy = HackathonFedAvg(fraction_train=1, run_name=run_name, min_fit_clients=3, min_eval_clients=3, min_available_clients=3)
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,

@@ -68,7 +68,7 @@ class Net(nn.Module):
             self._load_checkpoint(checkpoint_path)
 
         if train_backbone is None:
-            train_backbone = _env_flag("TRAIN_BACKBONE", default=False)
+            train_backbone = _env_flag("TRAIN_BACKBONE", default=True)
 
         if not train_backbone:
             for name, param in self.model.named_parameters():
