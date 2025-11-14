@@ -9,9 +9,14 @@ from torch.utils.data import DataLoader
 from torchvision import models
 
 try:
-    from torchvision.models import DenseNet121_Weights
+    from torchvision.models import EfficientNet_B0_Weights
 except (ImportError, AttributeError):
-    DenseNet121_Weights = None
+    EfficientNet_B0_Weights = None
+
+try:
+    import torchxrayvision as xrv
+except ImportError:
+    xrv = None
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
@@ -26,54 +31,81 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 class Net(nn.Module):
-    """DenseNet-121 head suitable for Chest X-ray fine-tuning."""
+    """Configurable Chest X-ray classifier with lightweight pretrained backbones."""
 
     def __init__(
         self,
         pretrained: bool = True,
         checkpoint_path: Optional[str] = None,
         train_backbone: Optional[bool] = None,
+        architecture: Optional[str] = None,
     ):
         super().__init__()
 
-        use_torchvision_weights = (
-            pretrained and checkpoint_path is None and DenseNet121_Weights is not None
-        )
-        weights = DenseNet121_Weights.DEFAULT if use_torchvision_weights else None
-        try:
-            self.model = models.densenet121(weights=weights)
-        except TypeError:
-            self.model = models.densenet121(pretrained=use_torchvision_weights)
-
-        conv0 = self.model.features.conv0
-        self.model.features.conv0 = nn.Conv2d(
-            in_channels=1,
-            out_channels=conv0.out_channels,
-            kernel_size=conv0.kernel_size,
-            stride=conv0.stride,
-            padding=conv0.padding,
-            bias=False,
-        )
-        if use_torchvision_weights:
-            with torch.no_grad():
-                self.model.features.conv0.weight.copy_(conv0.weight.mean(dim=1, keepdim=True))
-        else:
-            nn.init.kaiming_normal_(self.model.features.conv0.weight, mode="fan_out", nonlinearity="relu")
-
-        in_features = self.model.classifier.in_features
-        self.model.classifier = nn.Linear(in_features, 1)
+        self.architecture = (architecture or os.environ.get("MODEL_NAME") or "resnet50-res224-nih").lower()
+        self.backbone, backbone_features = self._build_backbone(self.architecture, pretrained)
+        self.classifier = nn.Linear(backbone_features, 1)
 
         checkpoint_path = checkpoint_path or os.environ.get("CHESTXRAY_PRETRAINED")
         if checkpoint_path:
             self._load_checkpoint(checkpoint_path)
 
         if train_backbone is None:
-            train_backbone = _env_flag("TRAIN_BACKBONE", default=True)
+            train_backbone = _env_flag("TRAIN_BACKBONE", default=False)
 
         if not train_backbone:
-            for name, param in self.model.named_parameters():
-                if not name.startswith("classifier"):
-                    param.requires_grad = False
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+    def _build_backbone(self, architecture: str, pretrained: bool):
+        if architecture in {"resnet50", "resnet50-res224-nih", "resnet50_nih"}:
+            return self._build_xrv_resnet50(pretrained)
+        if architecture in {"efficientnet_b0", "efficientnet-b0"}:
+            return self._build_efficientnet_b0(pretrained)
+        raise ValueError(
+            "Unknown architecture '{architecture}'. Supported: resnet50-res224-nih, efficientnet_b0.".format(
+                architecture=architecture
+            )
+        )
+
+    def _build_xrv_resnet50(self, pretrained: bool):
+        if xrv is None:
+            raise ImportError(
+                "torchxrayvision is required for resnet50-res224-nih. Install it via `pip install torchxrayvision`."
+            )
+        weights = "resnet50-res224-nih" if pretrained else None
+        base_model = xrv.models.ResNet(weights=weights)
+        backbone = base_model.model
+        in_features = backbone.fc.in_features
+        backbone.fc = nn.Identity()
+        return backbone, in_features
+
+    def _build_efficientnet_b0(self, pretrained: bool):
+        if pretrained and EfficientNet_B0_Weights is None:
+            raise ImportError(
+                "torchvision>=0.13 is required for EfficientNet_B0 pretrained weights. Upgrade torchvision or set pretrained=False."
+            )
+        weights = EfficientNet_B0_Weights.DEFAULT if pretrained and EfficientNet_B0_Weights is not None else None
+        model = models.efficientnet_b0(weights=weights)
+        orig_conv = model.features[0][0]
+        new_conv = nn.Conv2d(
+            in_channels=1,
+            out_channels=orig_conv.out_channels,
+            kernel_size=orig_conv.kernel_size,
+            stride=orig_conv.stride,
+            padding=orig_conv.padding,
+            bias=False,
+        )
+        model.features[0][0] = new_conv
+        if weights is not None:
+            with torch.no_grad():
+                new_conv.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
+        else:
+            nn.init.kaiming_normal_(new_conv.weight, mode="fan_out", nonlinearity="relu")
+
+        in_features = model.classifier[1].in_features
+        model.classifier = nn.Identity()
+        return model, in_features
 
     def _load_checkpoint(self, checkpoint_path: str) -> None:
         if not os.path.isfile(checkpoint_path):
@@ -91,18 +123,28 @@ class Net(nn.Module):
                 new_key = new_key[len("model."):]
             normalized_state_dict[new_key] = value
 
-        conv_key = "features.conv0.weight"
-        if conv_key in normalized_state_dict and normalized_state_dict[conv_key].shape[1] != 1:
-            normalized_state_dict[conv_key] = normalized_state_dict[conv_key].mean(dim=1, keepdim=True)
+        current_state = self.state_dict()
+        for key, tensor in list(normalized_state_dict.items()):
+            if (
+                key in current_state
+                and isinstance(tensor, torch.Tensor)
+                and isinstance(current_state[key], torch.Tensor)
+                and tensor.ndim >= 2
+                and current_state[key].ndim >= 2
+                and current_state[key].shape[1] == 1
+                and tensor.shape[1] != 1
+            ):
+                normalized_state_dict[key] = tensor.mean(dim=1, keepdim=True)
 
-        incompatible = self.model.load_state_dict(normalized_state_dict, strict=False)
+        incompatible = self.load_state_dict(normalized_state_dict, strict=False)
         if incompatible.missing_keys:
-            print(f"DenseNet checkpoint missing keys: {incompatible.missing_keys}")
+            print(f"Checkpoint missing keys: {incompatible.missing_keys}")
         if incompatible.unexpected_keys:
-            print(f"DenseNet checkpoint unexpected keys: {incompatible.unexpected_keys}")
+            print(f"Checkpoint unexpected keys: {incompatible.unexpected_keys}")
 
     def forward(self, x):
-        return self.model(x)  # No sigmoid, using BCEWithLogitsLoss
+        features = self.backbone(x)
+        return self.classifier(features)
 
 
 def collate_preprocessed(batch):
