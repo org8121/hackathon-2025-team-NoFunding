@@ -48,7 +48,7 @@ def evaluate_split(model, dataset_name, split_name, device):
 @app.main()
 def main(grid: Grid, context: Context) -> None:
     # Log GPU device
-    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     log(INFO, f"Device: {device}")
 
     num_rounds: int = context.run_config["num-server-rounds"]
