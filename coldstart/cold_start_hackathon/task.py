@@ -9,14 +9,10 @@ from torch.utils.data import DataLoader
 from torchvision import models
 
 try:
-    from torchvision.models import EfficientNet_B0_Weights
+    from torchvision.models import EfficientNet_B0_Weights, ResNet50_Weights
 except (ImportError, AttributeError):
     EfficientNet_B0_Weights = None
-
-try:
-    import torchxrayvision as xrv
-except ImportError:
-    xrv = None
+    ResNet50_Weights = None
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
@@ -58,8 +54,8 @@ class Net(nn.Module):
                 param.requires_grad = False
 
     def _build_backbone(self, architecture: str, pretrained: bool):
-        if architecture in {"resnet50", "resnet50-res224-nih", "resnet50_nih"}:
-            return self._build_xrv_resnet50(pretrained)
+        if architecture in {"resnet50", "resnet50-imagenet", "resnet50-res224-nih", "resnet50_nih"}:
+            return self._build_resnet50(pretrained)
         if architecture in {"efficientnet_b0", "efficientnet-b0"}:
             return self._build_efficientnet_b0(pretrained)
         raise ValueError(
@@ -68,17 +64,32 @@ class Net(nn.Module):
             )
         )
 
-    def _build_xrv_resnet50(self, pretrained: bool):
-        if xrv is None:
-            raise ImportError(
-                "torchxrayvision is required for resnet50-res224-nih. Install it via `pip install torchxrayvision`."
-            )
-        weights = "resnet50-res224-nih" if pretrained else None
-        base_model = xrv.models.ResNet(weights=weights)
-        backbone = base_model.model
-        in_features = backbone.fc.in_features
-        backbone.fc = nn.Identity()
-        return backbone, in_features
+    def _build_resnet50(self, pretrained: bool):
+        use_weights = pretrained and ResNet50_Weights is not None
+        weights = ResNet50_Weights.DEFAULT if use_weights else None
+        try:
+            model = models.resnet50(weights=weights)
+        except TypeError:
+            model = models.resnet50(pretrained=use_weights)
+
+        orig_conv = model.conv1
+        model.conv1 = nn.Conv2d(
+            in_channels=1,
+            out_channels=orig_conv.out_channels,
+            kernel_size=orig_conv.kernel_size,
+            stride=orig_conv.stride,
+            padding=orig_conv.padding,
+            bias=False,
+        )
+        if use_weights:
+            with torch.no_grad():
+                model.conv1.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
+        else:
+            nn.init.kaiming_normal_(model.conv1.weight, mode="fan_out", nonlinearity="relu")
+
+        in_features = model.fc.in_features
+        model.fc = nn.Identity()
+        return model, in_features
 
     def _build_efficientnet_b0(self, pretrained: bool):
         if pretrained and EfficientNet_B0_Weights is None:
@@ -86,7 +97,10 @@ class Net(nn.Module):
                 "torchvision>=0.13 is required for EfficientNet_B0 pretrained weights. Upgrade torchvision or set pretrained=False."
             )
         weights = EfficientNet_B0_Weights.DEFAULT if pretrained and EfficientNet_B0_Weights is not None else None
-        model = models.efficientnet_b0(weights=weights)
+        try:
+            model = models.efficientnet_b0(weights=weights)
+        except TypeError:
+            model = models.efficientnet_b0(pretrained=weights is not None)
         orig_conv = model.features[0][0]
         new_conv = nn.Conv2d(
             in_channels=1,
