@@ -45,9 +45,10 @@ clientapp = "cold_start_hackathon.client_app:app"
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
 image-size = 224  # Image size (128 or 224)
-num-server-rounds = 100  # Slurm processes are capped to 15min
+num-server-rounds = 50  # Slurm processes are capped to 15min
 local-epochs = 1
-lr = 0.01
+lr = 0.001
+personalization-start-percentage = 80  # Percentage of rounds after which local transfer learning kicks in
 
 # Default federation to use when running the app
 [tool.flwr.federations]
@@ -60,7 +61,7 @@ options.num-supernodes = 3
 [tool.flwr.federations.cluster-gpu]
 options.num-supernodes = 3
 options.backend.client-resources.num-cpus = 2
-options.backend.client-resources.num-gpus = 0.33
+options.backend.client-resources.num-gpus = 0.50
 
 [tool.flwr.federations.cluster-cpu]
 options.num-supernodes = 3
