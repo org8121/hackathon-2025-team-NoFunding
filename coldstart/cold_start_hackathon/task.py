@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,18 +7,12 @@ from torch.utils.data import DataLoader
 from torchvision import models
 from tqdm import tqdm
 
-hospital_datasets = {}  # Cache loaded hospital datasets
+
+hospital_datasets = {}  # Cache loaded hospital datasets per split/size
 
 
 class Net(nn.Module):
-    """ResNet34-based model for binary chest X-ray classification."""
-
-import torch
-import torch.nn as nn
-import torchvision.models as models
-
-class Net(nn.Module):
-    """ShuffleNet V2 x1.0 for binary chest X-ray classification."""
+    """ShuffleNet V2 x0.5 adapted for single-channel inputs and binary output."""
 
     def __init__(self):
         super(Net, self).__init__()
@@ -34,7 +27,7 @@ class Net(nn.Module):
         # ---------------------------
         # 2) Replace first conv (3ch -> 1ch) while keeping pretrained weights
         # ---------------------------
-        old_conv = base.conv1[0]       # ShuffleNet stores first conv here
+        old_conv = self.model.conv1[0]  # first conv layer
 
         new_conv = nn.Conv2d(
             in_channels=1,
@@ -45,22 +38,20 @@ class Net(nn.Module):
             bias=False
         )
 
-        # initialize from pretrained RGB weights by averaging channels
+        # Initialize from pretrained RGB weights by averaging channels
         with torch.no_grad():
             new_conv.weight[:] = old_conv.weight.mean(dim=1, keepdim=True)
 
-        base.conv1[0] = new_conv
+        self.model.conv1[0] = new_conv
 
         # ---------------------------
         # 3) Replace classifier with binary head
         # ---------------------------
-        in_features = base.fc.in_features
-        base.fc = nn.Linear(in_features, 1)  # 1 logit for BCEWithLogitsLoss
-
-        self.model = base
+        in_features = self.model.fc.in_features
+        self.model.fc = nn.Linear(in_features, 1)  # output 1 logit
 
     def forward(self, x):
-        return self.model(x)  # logits
+        return self.model(x)
 
 
 
