@@ -45,9 +45,10 @@ clientapp = "cold_start_hackathon.client_app:app"
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
 image-size = 128  # Image size (128 or 224)
-num-server-rounds = 100  # Slurm processes are capped to 15min
+num-server-rounds = 10  # Slurm processes are capped to 15min
 local-epochs = 1
-lr = 0.01
+lr = 0.005
+freeze-backbone-after-pct = 0.5  # Fraction of total rounds after which the backbone is frozen
 
 # Default federation to use when running the app
 [tool.flwr.federations]

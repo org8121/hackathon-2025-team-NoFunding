@@ -1,3 +1,5 @@
+import math
+
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -8,11 +10,15 @@ from cold_start_hackathon.task import test as test_fn
 from cold_start_hackathon.task import train as train_fn
 
 app = ClientApp()
+TRAIN_ROUND = 0
 
 
 @app.train()
 def train(msg: Message, context: Context):
     """Train the model on local data."""
+
+    global TRAIN_ROUND
+    TRAIN_ROUND += 1
 
     # Load the model and initialize it with the received weights
     model = Net()
@@ -27,6 +33,12 @@ def train(msg: Message, context: Context):
     image_size = context.run_config["image-size"]
     trainloader = load_data(dataset_name, "train", image_size=image_size)
 
+    # Determine if the backbone should be frozen for this round
+    total_rounds = context.run_config["num-server-rounds"]
+    freeze_pct = context.run_config.get("freeze-backbone-after-pct", 0.0)
+    freeze_after_round = int(math.ceil(total_rounds * freeze_pct))
+    freeze_backbone = freeze_after_round > 0 and TRAIN_ROUND >= freeze_after_round
+
     # Call the training function
     train_loss = train_fn(
         model,
@@ -34,6 +46,7 @@ def train(msg: Message, context: Context):
         context.run_config["local-epochs"],
         msg.content["config"]["lr"],
         device,
+        freeze_backbone=freeze_backbone,
     )
 
     # Construct and return reply Message

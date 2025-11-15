@@ -116,12 +116,20 @@ def load_data(
     return dataloader
 
 
-def train(net, trainloader, epochs, lr, device):
+def train(net, trainloader, epochs, lr, device, freeze_backbone=False):
     net.to(device)
     pos_weight = 0.9
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
 
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    if freeze_backbone:
+        for name, param in net.named_parameters():
+            param.requires_grad = name.startswith("model.fc") or name.startswith("fc")
+
+    trainable_params = [p for p in net.parameters() if p.requires_grad]
+    if not trainable_params:
+        trainable_params = list(net.parameters())
+
+    optimizer = torch.optim.Adam(trainable_params, lr=lr)
     net.train()
     running_loss = 0.0
     for _ in range(epochs):

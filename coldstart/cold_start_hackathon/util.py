@@ -140,6 +140,7 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"  Model not saved (AUROC {current_auroc:.4f} ≤ best {best_auroc:.4f})")
         return best_auroc
 
+    
 
 # For reference: These are all labels in the original dataset.
 # In the challenge we only consider a binary classification: (no) finding.
