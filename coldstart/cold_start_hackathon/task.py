@@ -7,115 +7,45 @@ import torch.nn as nn
 from torch.cuda.amp import autocast, GradScaler
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
-from torchvision import models
-
-try:
-    from torchvision.models import EfficientNet_B0_Weights, ResNet34_Weights
-except (ImportError, AttributeError):
-    EfficientNet_B0_Weights = None
-    ResNet34_Weights = None
+import torchvision.models as models
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    """Return True if the environment variable is set to a truthy value."""
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
-
-
 class Net(nn.Module):
-    """Chest X-ray classifier backed by a frozen torchvision backbone."""
-
-    def __init__(self, train_backbone: Optional[bool] = None, architecture: Optional[str] = None):
+    """DenseNet-121 chest X-ray classifier with ImageNet pretraining."""
+    
+    def __init__(self):
         super().__init__()
-        self.architecture = (architecture or os.environ.get("MODEL_NAME") or "efficientnet_b0").lower()
-        self.backbone, backbone_features = self._build_backbone(self.architecture)
-        self.classifier = nn.Linear(backbone_features, 1)
-
-        if train_backbone is None:
-            train_backbone = _env_flag("TRAIN_BACKBONE", default=False)
-
-        if not train_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-
-    def _build_backbone(self, architecture: str):
-        """Return a backbone model and its feature dimensionality."""
-        if architecture in {"resnet34", "resnet34-imagenet"}:
-            return self._build_resnet34()
-        if architecture in {"efficientnet_b0", "efficientnet-b0"}:
-            return self._build_efficientnet_b0()
-        raise ValueError(
-            f"Unknown architecture '{architecture}'. Supported: resnet34, efficientnet_b0."
-        )
-
-    def _build_resnet34(self):
-        """Create a 1-channel ResNet34 initialized with ImageNet1K v1 weights."""
-        if ResNet34_Weights is None:
-            raise ImportError(
-                "torchvision>=0.13 is required for ResNet34 pretrained weights. "
-                "Install a compatible torchvision version to continue."
-            )
-        weights = ResNet34_Weights.IMAGENET1K_V1
-        try:
-            model = models.resnet34(weights=weights)
-        except TypeError:
-            # Fallback for older torchvision versions
-            model = models.resnet34(pretrained=True)
-
-        orig_conv = model.conv1
-        model.conv1 = nn.Conv2d(
+        # Load ImageNet-pretrained DenseNet-121
+        self.model = models.densenet121(pretrained=True)
+        
+        # IMPORTANT: Save original conv0 weights before replacement
+        original_conv = self.model.features.conv0
+        
+        # Adapt to grayscale input (1 channel instead of 3)
+        self.model.features.conv0 = nn.Conv2d(
             in_channels=1,
-            out_channels=orig_conv.out_channels,
-            kernel_size=orig_conv.kernel_size,
-            stride=orig_conv.stride,
-            padding=orig_conv.padding,
-            bias=False,
+            out_channels=64,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False
         )
+        
+        # CRITICAL FIX: Initialize new conv by averaging RGB channels
+        # This preserves ImageNet pre-training for grayscale images
         with torch.no_grad():
-            model.conv1.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
-
-        in_features = model.fc.in_features
-        model.fc = nn.Identity()
-        return model, in_features
-
-    def _build_efficientnet_b0(self):
-        """Create a 1-channel EfficientNet-B0 initialized with ImageNet1K v1 weights."""
-        if EfficientNet_B0_Weights is None:
-            raise ImportError(
-                "torchvision>=0.13 is required for EfficientNet_B0 pretrained weights. "
-                "Install a compatible torchvision version to continue."
+            self.model.features.conv0.weight.copy_(
+                original_conv.weight.mean(dim=1, keepdim=True)
             )
-        weights = EfficientNet_B0_Weights.IMAGENET1K_V1
-        try:
-            model = models.efficientnet_b0(weights=weights)
-        except TypeError:
-            model = models.efficientnet_b0(pretrained=True)
-
-        orig_conv = model.features[0][0]
-        new_conv = nn.Conv2d(
-            in_channels=1,
-            out_channels=orig_conv.out_channels,
-            kernel_size=orig_conv.kernel_size,
-            stride=orig_conv.stride,
-            padding=orig_conv.padding,
-            bias=False,
-        )
-        model.features[0][0] = new_conv
-        with torch.no_grad():
-            new_conv.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
-
-        in_features = model.classifier[1].in_features
-        model.classifier = nn.Identity()
-        return model, in_features
-
+        
+        # Binary classification head
+        self.model.classifier = nn.Linear(1024, 1)
+    
     def forward(self, x):
-        features = self.backbone(x)
-        return self.classifier(features)
+        return self.model(x)
 
 
 def collate_preprocessed(batch):
