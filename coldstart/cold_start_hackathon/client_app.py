@@ -1,4 +1,5 @@
 import math
+import os
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
@@ -39,6 +40,15 @@ def train(msg: Message, context: Context):
     freeze_after_round = int(math.ceil(total_rounds * freeze_pct))
     freeze_backbone = freeze_after_round > 0 and TRAIN_ROUND >= freeze_after_round
 
+    local_model_path = None
+    if freeze_backbone:
+        local_model_dir = os.path.join("local_models", dataset_name)
+        os.makedirs(local_model_dir, exist_ok=True)
+        local_model_path = os.path.join(local_model_dir, "latest.pt")
+
+        if os.path.exists(local_model_path):
+            model.load_state_dict(torch.load(local_model_path, map_location=device))
+
     # Call the training function
     train_loss = train_fn(
         model,
@@ -47,6 +57,7 @@ def train(msg: Message, context: Context):
         msg.content["config"]["lr"],
         device,
         freeze_backbone=freeze_backbone,
+        local_model_path=local_model_path,
     )
 
     # Construct and return reply Message

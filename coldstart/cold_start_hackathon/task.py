@@ -107,7 +107,7 @@ def load_data(
     return dataloader
 
 
-def train(net, trainloader, epochs, lr, device, freeze_backbone=False):
+def train(net, trainloader, epochs, lr, device, freeze_backbone=False, local_model_path=None):
     net.to(device)
     pos_weight = 0.9
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
@@ -120,10 +120,14 @@ def train(net, trainloader, epochs, lr, device, freeze_backbone=False):
     if not trainable_params:
         trainable_params = list(net.parameters())
 
-    optimizer = torch.optim.Adam(trainable_params, lr=lr)
+    optimizer = torch.optim.SGD(trainable_params, lr=lr, momentum=0.9)
     net.train()
     running_loss = 0.0
-    for _ in range(epochs):
+    should_save_local = freeze_backbone and local_model_path
+    if should_save_local:
+        os.makedirs(os.path.dirname(local_model_path), exist_ok=True)
+
+    for epoch_idx in range(epochs):
         for batch in tqdm(trainloader):
             x = batch["x"].to(device)
             y = batch["y"].to(device)
@@ -133,6 +137,8 @@ def train(net, trainloader, epochs, lr, device, freeze_backbone=False):
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+        if should_save_local:
+            torch.save(net.state_dict(), local_model_path)
     avg_loss = running_loss / (len(trainloader) * epochs)
     return avg_loss
 
