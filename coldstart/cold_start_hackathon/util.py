@@ -123,7 +123,7 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
         models_dir = MODELS_DIR
-        models_dir.mkdir(exist_ok=True)
+        os.makedirs(models_dir, exist_ok=True)
 
         # Save model with run_name, round, and AUROC encoded in filename
         auroc_str = f"{int(current_auroc * 10000):04d}"
@@ -163,7 +163,7 @@ def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
 
     # Create models directory (relative to working directory, in scratch during SLURM jobs)
     models_dir = LOCAL_MODELS_DIR
-    models_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(models_dir, exist_ok=True)
 
     # Save model with run_name, round, and AUROC encoded in filename
     auroc_str = f"{int(current_auroc * 10000):04d}"
