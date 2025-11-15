@@ -1,11 +1,9 @@
-"""Helper functions for W&B logging, metrics, and server checkpoints."""
+"""Helper functions for W&B logging, metrics, and model persistence."""
 
-import json
-import os
 import warnings
 from logging import INFO
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -22,96 +20,13 @@ PARTITION_HOSPITAL_MAP = {
     2: "C",
 }
 
-MODELS_DIR = "models"
-CHECKPOINT_DIR = "checkpoints"
-LOCAL_MODELS_DIR = "local_models"
+MODELS_DIR = Path("models")
+LOCAL_MODELS_DIR = MODELS_DIR / "local_models"
 
 
 def _sanitize_run_name(run_name: Optional[str]) -> str:
     sanitized = run_name or "default_run"
     return sanitized or "default_run"
-
-
-def _checkpoint_metadata_path(run_name: str) -> Path:
-    sanitized = _sanitize_run_name(run_name)
-    return os.path.join(CHECKPOINT_DIR, f"{sanitized}_checkpoint.json")
-
-
-def _write_checkpoint_metadata(run_name: str, server_round: int, filename: Optional[str]) -> None:
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    data = {
-        "run_name": run_name,
-        "last_completed_round": int(server_round),
-    }
-    if filename is not None:
-        data["checkpoint_filename"] = filename
-    with open(_checkpoint_metadata_path(run_name), "w", encoding="utf-8") as meta_file:
-        json.dump(data, meta_file)
-
-
-def get_last_completed_round(run_name: str) -> int:
-    """Return the last completed global round stored in checkpoint metadata."""
-    path = _checkpoint_metadata_path(run_name)
-    if not path.exists():
-        return 0
-    try:
-        with open(path, "r", encoding="utf-8") as meta_file:
-            data = json.load(meta_file)
-    except (json.JSONDecodeError, OSError):
-        return 0
-    try:
-        return int(data.get("last_completed_round", 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def save_training_checkpoint(arrays: Any, server_round: int, run_name: str, best_auroc: Optional[float]) -> Optional[Path]:
-    """Persist the current global model and metadata for later resumption."""
-    if arrays is None:
-        return None
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    sanitized = _sanitize_run_name(run_name)
-    filename = f"{sanitized}_round{server_round:04d}.pt"
-    checkpoint_path = os.path.join(CHECKPOINT_DIR, filename)
-    state = {
-        "state_dict": arrays.to_torch_state_dict(),
-        "server_round": int(server_round),
-        "best_auroc": best_auroc,
-        "run_name": run_name,
-    }
-    torch.save(state, checkpoint_path)
-    _write_checkpoint_metadata(run_name, server_round, filename)
-    log(INFO, f"  Checkpoint saved to {checkpoint_path}")
-    return checkpoint_path
-
-
-def load_latest_checkpoint(run_name: str) -> Optional[Dict[str, Any]]:
-    """Load the latest checkpoint state for the given run, if it exists."""
-    sanitized = _sanitize_run_name(run_name)
-    metadata_path = _checkpoint_metadata_path(run_name)
-    checkpoint_path = None
-    if metadata_path.exists():
-        try:
-            with open(metadata_path, "r", encoding="utf-8") as meta_file:
-                data = json.load(meta_file)
-                filename = data.get("checkpoint_filename")
-                if filename:
-                    candidate = CHECKPOINT_DIR / filename
-                    if candidate.exists():
-                        checkpoint_path = candidate
-        except (json.JSONDecodeError, OSError):
-            checkpoint_path = None
-    if checkpoint_path is None:
-        pattern = f"{sanitized}_round*.pt"
-        candidates = sorted(CHECKPOINT_DIR.glob(pattern))
-        if not candidates:
-            return None
-        checkpoint_path = candidates[-1]
-    state = torch.load(checkpoint_path, map_location="cpu")
-    return {
-        "checkpoint_path": checkpoint_path,
-        **state,
-    }
 
 
 def compute_metrics(reply_metrics):
@@ -207,8 +122,8 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"✓ New best model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
-        models_dir = "models"
-        os.makedirs(models_dir, exist_ok=True)
+        models_dir = MODELS_DIR
+        models_dir.mkdir(exist_ok=True)
 
         # Save model with run_name, round, and AUROC encoded in filename
         auroc_str = f"{int(current_auroc * 10000):04d}"

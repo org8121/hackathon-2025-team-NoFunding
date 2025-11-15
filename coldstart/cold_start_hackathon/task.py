@@ -9,10 +9,10 @@ from torch.utils.data import DataLoader
 from torchvision import models
 
 try:
-    from torchvision.models import EfficientNet_B0_Weights, ResNet50_Weights
+    from torchvision.models import EfficientNet_B0_Weights, ResNet34_Weights
 except (ImportError, AttributeError):
     EfficientNet_B0_Weights = None
-    ResNet50_Weights = None
+    ResNet34_Weights = None
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
@@ -27,24 +27,13 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 class Net(nn.Module):
-    """Configurable Chest X-ray classifier with lightweight pretrained backbones."""
+    """Chest X-ray classifier backed by a frozen torchvision backbone."""
 
-    def __init__(
-        self,
-        pretrained: bool = True,
-        checkpoint_path: Optional[str] = None,
-        train_backbone: Optional[bool] = None,
-        architecture: Optional[str] = None,
-    ):
+    def __init__(self, train_backbone: Optional[bool] = None, architecture: Optional[str] = None):
         super().__init__()
-
-        self.architecture = (architecture or os.environ.get("MODEL_NAME") or "resnet50-res224-nih").lower()
-        self.backbone, backbone_features = self._build_backbone(self.architecture, pretrained)
+        self.architecture = (architecture or os.environ.get("MODEL_NAME") or "efficientnet_b0").lower()
+        self.backbone, backbone_features = self._build_backbone(self.architecture)
         self.classifier = nn.Linear(backbone_features, 1)
-
-        checkpoint_path = checkpoint_path or os.environ.get("CHESTXRAY_PRETRAINED")
-        if checkpoint_path:
-            self._load_checkpoint(checkpoint_path)
 
         if train_backbone is None:
             train_backbone = _env_flag("TRAIN_BACKBONE", default=False)
@@ -53,24 +42,29 @@ class Net(nn.Module):
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-    def _build_backbone(self, architecture: str, pretrained: bool):
-        if architecture in {"resnet50", "resnet50-imagenet", "resnet50-res224-nih", "resnet50_nih"}:
-            return self._build_resnet50(pretrained)
+    def _build_backbone(self, architecture: str):
+        """Return a backbone model and its feature dimensionality."""
+        if architecture in {"resnet34", "resnet34-imagenet"}:
+            return self._build_resnet34()
         if architecture in {"efficientnet_b0", "efficientnet-b0"}:
-            return self._build_efficientnet_b0(pretrained)
+            return self._build_efficientnet_b0()
         raise ValueError(
-            "Unknown architecture '{architecture}'. Supported: resnet50-res224-nih, efficientnet_b0.".format(
-                architecture=architecture
-            )
+            f"Unknown architecture '{architecture}'. Supported: resnet34, efficientnet_b0."
         )
 
-    def _build_resnet50(self, pretrained: bool):
-        use_weights = pretrained and ResNet50_Weights is not None
-        weights = ResNet50_Weights.DEFAULT if use_weights else None
+    def _build_resnet34(self):
+        """Create a 1-channel ResNet34 initialized with ImageNet1K v1 weights."""
+        if ResNet34_Weights is None:
+            raise ImportError(
+                "torchvision>=0.13 is required for ResNet34 pretrained weights. "
+                "Install a compatible torchvision version to continue."
+            )
+        weights = ResNet34_Weights.IMAGENET1K_V1
         try:
-            model = models.resnet50(weights=weights)
+            model = models.resnet34(weights=weights)
         except TypeError:
-            model = models.resnet50(pretrained=use_weights)
+            # Fallback for older torchvision versions
+            model = models.resnet34(pretrained=True)
 
         orig_conv = model.conv1
         model.conv1 = nn.Conv2d(
@@ -81,26 +75,26 @@ class Net(nn.Module):
             padding=orig_conv.padding,
             bias=False,
         )
-        if use_weights:
-            with torch.no_grad():
-                model.conv1.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
-        else:
-            nn.init.kaiming_normal_(model.conv1.weight, mode="fan_out", nonlinearity="relu")
+        with torch.no_grad():
+            model.conv1.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
 
         in_features = model.fc.in_features
         model.fc = nn.Identity()
         return model, in_features
 
-    def _build_efficientnet_b0(self, pretrained: bool):
-        if pretrained and EfficientNet_B0_Weights is None:
+    def _build_efficientnet_b0(self):
+        """Create a 1-channel EfficientNet-B0 initialized with ImageNet1K v1 weights."""
+        if EfficientNet_B0_Weights is None:
             raise ImportError(
-                "torchvision>=0.13 is required for EfficientNet_B0 pretrained weights. Upgrade torchvision or set pretrained=False."
+                "torchvision>=0.13 is required for EfficientNet_B0 pretrained weights. "
+                "Install a compatible torchvision version to continue."
             )
-        weights = EfficientNet_B0_Weights.DEFAULT if pretrained and EfficientNet_B0_Weights is not None else None
+        weights = EfficientNet_B0_Weights.IMAGENET1K_V1
         try:
             model = models.efficientnet_b0(weights=weights)
         except TypeError:
-            model = models.efficientnet_b0(pretrained=weights is not None)
+            model = models.efficientnet_b0(pretrained=True)
+
         orig_conv = model.features[0][0]
         new_conv = nn.Conv2d(
             in_channels=1,
@@ -111,50 +105,12 @@ class Net(nn.Module):
             bias=False,
         )
         model.features[0][0] = new_conv
-        if weights is not None:
-            with torch.no_grad():
-                new_conv.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
-        else:
-            nn.init.kaiming_normal_(new_conv.weight, mode="fan_out", nonlinearity="relu")
+        with torch.no_grad():
+            new_conv.weight.copy_(orig_conv.weight.mean(dim=1, keepdim=True))
 
         in_features = model.classifier[1].in_features
         model.classifier = nn.Identity()
         return model, in_features
-
-    def _load_checkpoint(self, checkpoint_path: str) -> None:
-        if not os.path.isfile(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
-        state_dict = checkpoint.get("state_dict", checkpoint)
-
-        normalized_state_dict = {}
-        for key, value in state_dict.items():
-            new_key = key
-            if new_key.startswith("module."):
-                new_key = new_key[len("module."):]
-            if new_key.startswith("model."):
-                new_key = new_key[len("model."):]
-            normalized_state_dict[new_key] = value
-
-        current_state = self.state_dict()
-        for key, tensor in list(normalized_state_dict.items()):
-            if (
-                key in current_state
-                and isinstance(tensor, torch.Tensor)
-                and isinstance(current_state[key], torch.Tensor)
-                and tensor.ndim >= 2
-                and current_state[key].ndim >= 2
-                and current_state[key].shape[1] == 1
-                and tensor.shape[1] != 1
-            ):
-                normalized_state_dict[key] = tensor.mean(dim=1, keepdim=True)
-
-        incompatible = self.load_state_dict(normalized_state_dict, strict=False)
-        if incompatible.missing_keys:
-            print(f"Checkpoint missing keys: {incompatible.missing_keys}")
-        if incompatible.unexpected_keys:
-            print(f"Checkpoint unexpected keys: {incompatible.unexpected_keys}")
 
     def forward(self, x):
         features = self.backbone(x)

@@ -13,7 +13,6 @@ from cold_start_hackathon.util import (
     PARTITION_HOSPITAL_MAP,
     compute_metrics,
     save_local_model,
-    get_last_completed_round,
     LOCAL_MODELS_DIR,
 )
 from cold_start_hackathon.task import test as test_fn
@@ -24,7 +23,6 @@ app = ClientApp()
 
 RUN_NAME = os.environ.get("JOB_NAME", "your_custom_run_name")
 CLIENT_ROUND_TRACKER = defaultdict(int)
-GLOBAL_ROUND_OFFSET = get_last_completed_round(RUN_NAME)
 
 
 def _get_config_value(config, key):
@@ -53,7 +51,7 @@ def _get_server_round(msg: Message, partition_id: int) -> int:
     else:
         CLIENT_ROUND_TRACKER[partition_id] += 1
         base_round = CLIENT_ROUND_TRACKER[partition_id]
-    return GLOBAL_ROUND_OFFSET + base_round
+    return base_round
 
 
 def _personalization_start_round(run_config: dict) -> float:
