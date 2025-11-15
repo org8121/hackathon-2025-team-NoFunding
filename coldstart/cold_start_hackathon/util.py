@@ -37,7 +37,7 @@ def _checkpoint_metadata_path(run_name: str) -> Path:
 
 
 def _write_checkpoint_metadata(run_name: str, server_round: int, filename: Optional[str]) -> None:
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     data = {
         "run_name": run_name,
         "last_completed_round": int(server_round),
@@ -68,7 +68,7 @@ def save_training_checkpoint(arrays: Any, server_round: int, run_name: str, best
     """Persist the current global model and metadata for later resumption."""
     if arrays is None:
         return None
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     sanitized = _sanitize_run_name(run_name)
     filename = f"{sanitized}_round{server_round:04d}.pt"
     checkpoint_path = CHECKPOINT_DIR / filename
