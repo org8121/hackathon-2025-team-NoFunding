@@ -10,6 +10,7 @@ import torch
 import wandb
 from flwr.common import log
 from sklearn.metrics import roc_auc_score
+import os
 
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
@@ -20,9 +21,8 @@ PARTITION_HOSPITAL_MAP = {
     2: "C",
 }
 
-MODELS_DIR = Path("models")
-LOCAL_MODELS_DIR = MODELS_DIR / "local_models"
-
+MODELS_DIR = "models"
+LOCAL_MODELS_DIR = "local_models"
 
 def _sanitize_run_name(run_name: Optional[str]) -> str:
     sanitized = run_name or "default_run"
@@ -128,7 +128,7 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         # Save model with run_name, round, and AUROC encoded in filename
         auroc_str = f"{int(current_auroc * 10000):04d}"
         model_filename = f"{run_name}_round{server_round}_auroc{auroc_str}.pt"
-        model_path = models_dir / model_filename
+        model_path = os.path.join(models_dir, model_filename)
         torch.save(arrays.to_torch_state_dict(), model_path)
 
         log(INFO, f"  Model saved to {model_path}")
@@ -168,7 +168,7 @@ def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
     # Save model with run_name, round, and AUROC encoded in filename
     auroc_str = f"{int(current_auroc * 10000):04d}"
     model_filename = f"{run_name}_{hospital_id}_round{server_round}_auroc{auroc_str}.pt"
-    model_path = models_dir / model_filename
+    model_path = os.path.join(models_dir, model_filename)
     torch.save(arrays.to_torch_state_dict(), model_path)
 
     log(INFO, f"  Model saved to {model_path}")

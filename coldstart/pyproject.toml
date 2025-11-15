@@ -61,7 +61,7 @@ options.num-supernodes = 3
 [tool.flwr.federations.cluster-gpu]
 options.num-supernodes = 3
 options.backend.client-resources.num-cpus = 2
-options.backend.client-resources.num-gpus = 1.0
+options.backend.client-resources.num-gpus = 0.33
 
 [tool.flwr.federations.cluster-cpu]
 options.num-supernodes = 3
