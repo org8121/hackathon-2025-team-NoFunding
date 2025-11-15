@@ -22,34 +22,23 @@ PARTITION_HOSPITAL_MAP = {
     2: "C",
 }
 
-
-def _resolve_models_dir() -> Path:
-    """Determine the base directory for all saved models."""
-    override = os.environ.get("COLDSTART_MODELS_DIR")
-    if override:
-        return Path(override).expanduser()
-    base_dir = os.getcwd()
-    return Path(os.path.join(base_dir, "models"))
-
-
-MODELS_DIR = _resolve_models_dir()
-CHECKPOINT_DIR = Path(os.path.join(str(MODELS_DIR), "checkpoints"))
-LOCAL_MODELS_DIR = Path(os.path.join(str(MODELS_DIR), "local_models"))
+MODELS_DIR = "models"
+CHECKPOINT_DIR = "checkpoints"
+LOCAL_MODELS_DIR = "local_models"
 
 
 def _sanitize_run_name(run_name: Optional[str]) -> str:
     sanitized = run_name or "default_run"
-    sanitized = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in sanitized)
     return sanitized or "default_run"
 
 
 def _checkpoint_metadata_path(run_name: str) -> Path:
     sanitized = _sanitize_run_name(run_name)
-    return CHECKPOINT_DIR / f"{sanitized}_checkpoint.json"
+    return os.path.join(CHECKPOINT_DIR, f"{sanitized}_checkpoint.json")
 
 
 def _write_checkpoint_metadata(run_name: str, server_round: int, filename: Optional[str]) -> None:
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     data = {
         "run_name": run_name,
         "last_completed_round": int(server_round),
@@ -80,10 +69,10 @@ def save_training_checkpoint(arrays: Any, server_round: int, run_name: str, best
     """Persist the current global model and metadata for later resumption."""
     if arrays is None:
         return None
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     sanitized = _sanitize_run_name(run_name)
     filename = f"{sanitized}_round{server_round:04d}.pt"
-    checkpoint_path = CHECKPOINT_DIR / filename
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, filename)
     state = {
         "state_dict": arrays.to_torch_state_dict(),
         "server_round": int(server_round),
@@ -218,8 +207,8 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"✓ New best model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
-        models_dir = MODELS_DIR
-        models_dir.mkdir(parents=True, exist_ok=True)
+        models_dir = "models"
+        os.makedirs(models_dir, exist_ok=True)
 
         # Save model with run_name, round, and AUROC encoded in filename
         auroc_str = f"{int(current_auroc * 10000):04d}"

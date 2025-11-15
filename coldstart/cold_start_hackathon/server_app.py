@@ -78,10 +78,6 @@ def main(grid: Grid, context: Context) -> None:
     else:
         log(INFO, "W&B disabled (credentials not provided). Set WANDB_API_KEY, WANDB_ENTITY, and WANDB_PROJECT to enable.")
 
-    
-    model_dir = "models"
-    checkpoint_dir = os.path.join(model_dir, "checkpoints")
-    os.makedirs(checkpoint_dir, exist_ok=True)
 
     checkpoint_state = load_latest_checkpoint(run_name)
     best_auroc = None
