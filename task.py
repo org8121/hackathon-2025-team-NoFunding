@@ -14,54 +14,24 @@ hospital_datasets = {}  # Cache loaded hospital datasets
 class Net(nn.Module):
     """ResNet34-based model for binary chest X-ray classification."""
 
-import torch
-import torch.nn as nn
-import torchvision.models as models
-
-class Net(nn.Module):
-    """ShuffleNet V2 x1.0 for binary chest X-ray classification."""
-
     def __init__(self):
         super(Net, self).__init__()
-
-        # ---------------------------
-        # 1) Load ShuffleNetV2 backbone
-        # ---------------------------
-        self.model = models.shufflenet_v2_x0_5(
-            weights=models.ShuffleNet_V2_X0_5_Weights.IMAGENET1K_V1
-        )
-
-        # ---------------------------
-        # 2) Replace first conv (3ch -> 1ch) while keeping pretrained weights
-        # ---------------------------
-        old_conv = base.conv1[0]       # ShuffleNet stores first conv here
-
-        new_conv = nn.Conv2d(
+        self.model = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
+        # Adapt to grayscale input
+        self.model.conv1 = nn.Conv2d(
             in_channels=1,
-            out_channels=old_conv.out_channels,
-            kernel_size=old_conv.kernel_size,
-            stride=old_conv.stride,
-            padding=old_conv.padding,
-            bias=False
+            out_channels=64,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False,
         )
-
-        # initialize from pretrained RGB weights by averaging channels
-        with torch.no_grad():
-            new_conv.weight[:] = old_conv.weight.mean(dim=1, keepdim=True)
-
-        base.conv1[0] = new_conv
-
-        # ---------------------------
-        # 3) Replace classifier with binary head
-        # ---------------------------
-        in_features = base.fc.in_features
-        base.fc = nn.Linear(in_features, 1)  # 1 logit for BCEWithLogitsLoss
-
-        self.model = base
+        # Binary classification head (single logit)
+        in_features = self.model.fc.in_features
+        self.model.fc = nn.Linear(in_features, 1)
 
     def forward(self, x):
-        return self.model(x)  # logits
-
+        return self.model(x)  # No sigmoid, using BCEWithLogitsLoss
 
 
 def collate_preprocessed(batch):
@@ -80,8 +50,8 @@ def collate_preprocessed(batch):
 def load_data(
     dataset_name: str,
     split_name: str,
-    image_size: int = 128,
-    batch_size: int = 128,
+    image_size: int = 224,
+    batch_size: int = 32,
 ):
     """Load hospital X-ray data.
 
@@ -118,9 +88,7 @@ def load_data(
 
 def train(net, trainloader, epochs, lr, device):
     net.to(device)
-    pos_weight = 0.9
-    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
-
+    criterion = torch.nn.BCEWithLogitsLoss().to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     net.train()
     running_loss = 0.0
@@ -137,7 +105,6 @@ def train(net, trainloader, epochs, lr, device):
     avg_loss = running_loss / (len(trainloader) * epochs)
     return avg_loss
 
-
 def test(net, testloader, device):
     """Evaluate the model on the test set (binary classification).
 
@@ -151,38 +118,38 @@ def test(net, testloader, device):
         all_labels: Array of true labels (for AUROC)
     """
     net.to(device)
-    criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = torch.nn.BCEWithLogitsLoss(reduction="sum")
+    #criterion = torch.nn.BCEWithLogitsLoss()
     net.eval()
     total_loss = 0.0
+    total_samples = 0
 
     all_probs = []
     all_predictions = []
     all_labels = []
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch in testloader:
             x = batch["x"].to(device)
-            y = batch["y"].to(device)
-            outputs = net(x)
-            loss = criterion(outputs, y)
+            y = batch["y"].to(device).float()  # ensure float in [0,1]
+            outputs = net(x).view(-1)          # ensure shape (N,)
+            loss = criterion(outputs, y.view(-1))
+            batch_size = y.numel()
             total_loss += loss.item()
+            total_samples += batch_size
 
-            # Get predictions and probabilities
             probs = torch.sigmoid(outputs)
-            predictions = (probs > 0.5).float()
+            preds = (probs > 0.5).cpu().numpy()
 
-            # Store for metric calculation
             all_probs.append(probs.cpu().numpy())
-            all_predictions.append(predictions.cpu().numpy())
-            all_labels.append(y.cpu().numpy())
+            all_predictions.append(preds)
+            all_labels.append(y.cpu().numpy().reshape(-1))
 
-    avg_loss = total_loss / len(testloader)
+    avg_loss = total_loss / total_samples
 
-    # Flatten arrays
     all_probs = np.concatenate(all_probs).flatten()
     all_predictions = np.concatenate(all_predictions).flatten()
     all_labels = np.concatenate(all_labels).flatten()
 
-    # Calculate confusion matrix components
     tp = int(np.sum((all_predictions == 1) & (all_labels == 1)))
     tn = int(np.sum((all_predictions == 0) & (all_labels == 0)))
     fp = int(np.sum((all_predictions == 1) & (all_labels == 0)))
