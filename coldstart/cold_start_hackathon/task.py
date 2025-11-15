@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import autocast, GradScaler
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from torchvision import models
@@ -159,31 +160,118 @@ def load_data(
 
     data = hospital_datasets[cache_key]
     shuffle = (split_name == "train")  # shuffle only for training splits
-    dataloader = DataLoader(data, batch_size=batch_size, shuffle=shuffle, num_workers=4, collate_fn=collate_preprocessed)
+    dataloader = DataLoader(
+        data,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=4,
+        pin_memory=True,  # Faster GPU transfer
+        prefetch_factor=2,  # Prefetch next batches
+        persistent_workers=True,  # Keep workers alive between epochs
+        collate_fn=collate_preprocessed
+    )
     return dataloader
 
 
-def train(net, trainloader, epochs, lr, device):
+def calculate_pos_weight(trainloader):
+    """Calculate positive class weight for handling class imbalance."""
+    num_positive = 0
+    num_negative = 0
+    for batch in trainloader:
+        labels = batch["y"]
+        num_positive += labels.sum().item()
+        num_negative += (labels == 0).sum().item()
+
+    if num_positive == 0:
+        return torch.tensor([1.0])
+
+    pos_weight = num_negative / num_positive
+    print(f"Class imbalance - Positive weight: {pos_weight:.2f}")
+    return torch.tensor([pos_weight])
+
+
+def train(
+    net, 
+    trainloader, 
+    epochs, 
+    lr, 
+    device,
+    use_amp=True,
+    gradient_clip_norm=10.0
+):
+    """Train the model with mixed precision and gradient clipping.
+    
+    Args:
+        net: Model to train
+        trainloader: Training data loader
+        epochs: Number of local epochs
+        lr: Learning rate
+        device: Device to train on
+        use_amp: Enable automatic mixed precision (CRITICAL for memory efficiency)
+        gradient_clip_norm: Max gradient norm for clipping (stability)
+    """
     net.to(device)
-    criterion = torch.nn.BCEWithLogitsLoss().to(device)
-    optimizer = torch.optim.Adam((p for p in net.parameters() if p.requires_grad), lr=lr)
+    
+    # Calculate class weights for imbalanced data
+    pos_weight = calculate_pos_weight(trainloader).to(device)
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight).to(device)
+    
+    # Optimizer with L2 regularization
+    optimizer = torch.optim.Adam(
+        (p for p in net.parameters() if p.requires_grad), 
+        lr=lr,
+        weight_decay=1e-4
+    )
+    
+    # Mixed precision scaler for memory efficiency
+    scaler = GradScaler() if use_amp else None
+    
     net.train()
     running_loss = 0.0
-    for _ in range(epochs):
-        for batch in tqdm(trainloader):
+    
+    for epoch in range(epochs):
+        epoch_loss = 0.0
+        for batch in tqdm(trainloader, desc=f"Epoch {epoch+1}/{epochs}", leave=False):
             x = batch["x"].to(device)
             y = batch["y"].to(device)
-            optimizer.zero_grad()
-            outputs = net(x)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item()
-    avg_loss = running_loss / (len(trainloader) * epochs)
+            
+            optimizer.zero_grad(set_to_none=True)  # Slightly faster than zero_grad()
+            
+            if use_amp:
+                # Mixed precision forward pass
+                with autocast():
+                    outputs = net(x)
+                    loss = criterion(outputs, y)
+                
+                # Mixed precision backward pass
+                scaler.scale(loss).backward()
+                
+                # Gradient clipping for stability
+                if gradient_clip_norm > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=gradient_clip_norm)
+                
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                outputs = net(x)
+                loss = criterion(outputs, y)
+                loss.backward()
+                
+                if gradient_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=gradient_clip_norm)
+                
+                optimizer.step()
+            
+            epoch_loss += loss.item()
+        
+        running_loss += epoch_loss / len(trainloader)
+    
+    avg_loss = running_loss / epochs
     return avg_loss
 
 
-def test(net, testloader, device):
+def test(net, testloader, device, use_amp=True):
     """Evaluate the model on the test set (binary classification).
 
     Returns:
@@ -207,8 +295,15 @@ def test(net, testloader, device):
         for batch in testloader:
             x = batch["x"].to(device)
             y = batch["y"].to(device)
-            outputs = net(x)
-            loss = criterion(outputs, y)
+            
+            if use_amp:
+                with autocast():
+                    outputs = net(x)
+                    loss = criterion(outputs, y)
+            else:
+                outputs = net(x)
+                loss = criterion(outputs, y)
+            
             total_loss += loss.item()
 
             # Get predictions and probabilities
