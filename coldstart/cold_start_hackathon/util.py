@@ -22,7 +22,19 @@ PARTITION_HOSPITAL_MAP = {
     2: "C",
 }
 
-CHECKPOINT_DIR = Path("models/checkpoints")
+
+def _resolve_models_dir() -> Path:
+    """Determine the base directory for all saved models."""
+    override = os.environ.get("COLDSTART_MODELS_DIR")
+    if override:
+        return Path(override).expanduser()
+    base_dir = os.getcwd()
+    return Path(os.path.join(base_dir, "models"))
+
+
+MODELS_DIR = _resolve_models_dir()
+CHECKPOINT_DIR = Path(os.path.join(str(MODELS_DIR), "checkpoints"))
+LOCAL_MODELS_DIR = Path(os.path.join(str(MODELS_DIR), "local_models"))
 
 
 def _sanitize_run_name(run_name: Optional[str]) -> str:
@@ -37,7 +49,7 @@ def _checkpoint_metadata_path(run_name: str) -> Path:
 
 
 def _write_checkpoint_metadata(run_name: str, server_round: int, filename: Optional[str]) -> None:
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     data = {
         "run_name": run_name,
         "last_completed_round": int(server_round),
@@ -68,7 +80,7 @@ def save_training_checkpoint(arrays: Any, server_round: int, run_name: str, best
     """Persist the current global model and metadata for later resumption."""
     if arrays is None:
         return None
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     sanitized = _sanitize_run_name(run_name)
     filename = f"{sanitized}_round{server_round:04d}.pt"
     checkpoint_path = CHECKPOINT_DIR / filename
@@ -206,13 +218,13 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"✓ New best model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
-        models_dir = "models"
-        os.makedirs(models_dir, exist_ok=True)
+        models_dir = MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
 
         # Save model with run_name, round, and AUROC encoded in filename
         auroc_str = f"{int(current_auroc * 10000):04d}"
         model_filename = f"{run_name}_round{server_round}_auroc{auroc_str}.pt"
-        model_path = os.path.join(models_dir, model_filename)
+        model_path = models_dir / model_filename
         torch.save(arrays.to_torch_state_dict(), model_path)
 
         log(INFO, f"  Model saved to {model_path}")
@@ -221,7 +233,7 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         if wandb.run is not None:
             metadata = {**agg_metrics, "round": server_round, "run_name": run_name}
             artifact = wandb.Artifact(model_filename.replace('.pt', ''), type="model", metadata=metadata)
-            artifact.add_file(model_path)
+            artifact.add_file(str(model_path))
             wandb.log_artifact(artifact)
 
         return current_auroc
@@ -246,13 +258,13 @@ def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
     log(INFO, f"✓ New local model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
     # Create models directory (relative to working directory, in scratch during SLURM jobs)
-    models_dir = "models/local_models"
-    os.makedirs(models_dir, exist_ok=True)
+    models_dir = LOCAL_MODELS_DIR
+    models_dir.mkdir(parents=True, exist_ok=True)
 
     # Save model with run_name, round, and AUROC encoded in filename
     auroc_str = f"{int(current_auroc * 10000):04d}"
     model_filename = f"{run_name}_{hospital_id}_round{server_round}_auroc{auroc_str}.pt"
-    model_path = os.path.join(models_dir, model_filename)
+    model_path = models_dir / model_filename
     torch.save(arrays.to_torch_state_dict(), model_path)
 
     log(INFO, f"  Model saved to {model_path}")
@@ -261,7 +273,7 @@ def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
     if wandb.run is not None:
         metadata = {**local_metric, "round": server_round, "run_name": run_name}
         artifact = wandb.Artifact(model_filename.replace('.pt', ''), type="model", metadata=metadata)
-        artifact.add_file(model_path)
+        artifact.add_file(str(model_path))
         wandb.log_artifact(artifact)
 
     return current_auroc

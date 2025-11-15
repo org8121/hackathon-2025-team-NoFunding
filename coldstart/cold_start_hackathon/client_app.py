@@ -14,6 +14,7 @@ from cold_start_hackathon.util import (
     compute_metrics,
     save_local_model,
     get_last_completed_round,
+    LOCAL_MODELS_DIR,
 )
 from cold_start_hackathon.task import test as test_fn
 from cold_start_hackathon.task import train as train_fn
@@ -22,7 +23,6 @@ from flwr.common import log
 app = ClientApp()
 
 RUN_NAME = os.environ.get("JOB_NAME", "your_custom_run_name")
-LOCAL_MODELS_DIR = Path("models/local_models")
 CLIENT_ROUND_TRACKER = defaultdict(int)
 GLOBAL_ROUND_OFFSET = get_last_completed_round(RUN_NAME)
 
