@@ -10,18 +10,19 @@ build-backend = "hatchling.build"
 [project]
 name = "coldstart"
 version = "1.0.0"
-description = ""
+description = "NIH Chest X-ray FL with optimized training"
 license = "Apache-2.0"
 requires-python = ">=3.9,<3.13"
 dependencies = [
     "flwr[simulation]>=1.23.0",
     "ray>=2.0.0",
-    "torch",
-    "torchvision",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
     "datasets",
     "scipy",
-    "scikit-learn",
+    "scikit-learn>=1.3.0",
     "wandb",
+    "tqdm",
 
     # Analysis and visualization
     "jupyterlab",
@@ -44,10 +45,23 @@ clientapp = "cold_start_hackathon.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
+# Image settings
 image-size = 128  # Image size (128 or 224)
-num-server-rounds = 100  # Slurm processes are capped to 15min
+
+# Training hyperparameters - OPTIMIZED
+num-server-rounds = 5  # Slurm processes are capped to 15min
 local-epochs = 1
-lr = 0.01
+batch-size = 128  # With AMP, fits in 4-5 GB per client
+lr = 0.005
+
+# Memory and speed optimizations - CRITICAL
+use-amp = true  # Mixed precision - 40-50% memory savings
+gradient-clip-norm = 10.0  # Gradient clipping for stability
+
+# Personalization settings
+personalization-start-percentage = 50  # Percentage of rounds after which local transfer learning kicks in
+personalization-local-epochs = 3  # Fine-tuning during personalization
+personalization-lr = 0.0005  # Lower LR for personalization
 
 # Default federation to use when running the app
 [tool.flwr.federations]
@@ -59,12 +73,12 @@ options.num-supernodes = 3
 
 [tool.flwr.federations.cluster-gpu]
 options.num-supernodes = 3
-options.backend.client-resources.num-cpus = 2
-options.backend.client-resources.num-gpus = 0.33
+options.backend.client-resources.num-cpus = 4  # For data loading
+options.backend.client-resources.num-gpus = 0.33  # ~10GB per client
 
 [tool.flwr.federations.cluster-cpu]
 options.num-supernodes = 3
-options.backend.client-resources.num-cpus = 2
+options.backend.client-resources.num-cpus = 4
 
 [tool.flwr.federations.supergrid-deployment]
 address = "supergrid.flower.ai"

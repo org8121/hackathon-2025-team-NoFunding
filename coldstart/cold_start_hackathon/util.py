@@ -1,18 +1,16 @@
-"""Helper functions for W&B logging and metric computation.
+"""Helper functions for W&B logging, metrics, and model persistence."""
 
-These functions should not be changed by hackathon participants, unless you want
-to log additional metrics or save models based on different criteria.
-"""
-
-import os
 import warnings
 from logging import INFO
+from pathlib import Path
+from typing import Any, Optional
 
 import numpy as np
 import torch
 import wandb
 from flwr.common import log
 from sklearn.metrics import roc_auc_score
+import os
 
 # Suppress protobuf deprecation warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.protobuf")
@@ -22,6 +20,10 @@ PARTITION_HOSPITAL_MAP = {
     1: "B",
     2: "C",
 }
+
+def _sanitize_run_name(run_name: Optional[str]) -> str:
+    sanitized = run_name or "default_run"
+    return sanitized or "default_run"
 
 
 def compute_metrics(reply_metrics):
@@ -117,6 +119,7 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"✓ New best model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
+        # Create models directory (relative to working directory, in scratch during SLURM jobs)
         models_dir = "models"
         os.makedirs(models_dir, exist_ok=True)
 
@@ -125,20 +128,57 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         model_filename = f"{run_name}_round{server_round}_auroc{auroc_str}.pt"
         model_path = os.path.join(models_dir, model_filename)
         torch.save(arrays.to_torch_state_dict(), model_path)
-
         log(INFO, f"  Model saved to {model_path}")
+
 
         # Also log to W&B if active
         if wandb.run is not None:
             metadata = {**agg_metrics, "round": server_round, "run_name": run_name}
             artifact = wandb.Artifact(model_filename.replace('.pt', ''), type="model", metadata=metadata)
-            artifact.add_file(model_path)
+            artifact.add_file(str(model_path))
             wandb.log_artifact(artifact)
 
         return current_auroc
     else:
         log(INFO, f"  Model not saved (AUROC {current_auroc:.4f} ≤ best {best_auroc:.4f})")
         return best_auroc
+    
+
+def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
+    """
+    Models are saved to ./models/local_models/ directory (in scratch during SLURM jobs)
+    with filename encoding: {run_name}_round{N}_auroc{XXXX}.pt
+
+    After training, the best model will be automatically copied to
+    /home/${USER}/models/ by submit-job.sh.
+
+    Feel free to save models based on whatever metric you want.
+
+    Returns updated best_auroc.
+    """
+    current_auroc = local_metric["auroc"]
+    log(INFO, f"✓ New local model! Round {server_round}, AUROC: {current_auroc:.4f}")
+
+    # Create models directory (relative to working directory, in scratch during SLURM jobs)
+    models_dir = "local_models"
+    os.makedirs(models_dir, exist_ok=True)
+
+    # Save model with run_name, round, and AUROC encoded in filename
+    auroc_str = f"{int(current_auroc * 10000):04d}"
+    model_filename = f"{run_name}_{hospital_id}_round{server_round}_auroc{auroc_str}.pt"
+    model_path = os.path.join(models_dir, model_filename)
+    log(INFO, f"  Saving model to {model_path}")
+    torch.save(arrays.to_torch_state_dict(), model_path)
+    log(INFO, f"  Model saved to {model_path}")
+
+    # Also log to W&B if active
+    if wandb.run is not None:
+        metadata = {**local_metric, "round": server_round, "run_name": run_name}
+        artifact = wandb.Artifact(model_filename.replace('.pt', ''), type="model", metadata=metadata)
+        artifact.add_file(str(model_path))
+        wandb.log_artifact(artifact)
+
+    return current_auroc
 
 
 # For reference: These are all labels in the original dataset.
