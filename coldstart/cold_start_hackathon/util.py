@@ -21,9 +21,6 @@ PARTITION_HOSPITAL_MAP = {
     2: "C",
 }
 
-MODELS_DIR = "models"
-LOCAL_MODELS_DIR = "local_models"
-
 def _sanitize_run_name(run_name: Optional[str]) -> str:
     sanitized = run_name or "default_run"
     return sanitized or "default_run"
@@ -122,7 +119,8 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         log(INFO, f"✓ New best model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
         # Create models directory (relative to working directory, in scratch during SLURM jobs)
-        models_dir = MODELS_DIR
+        # Create models directory (relative to working directory, in scratch during SLURM jobs)
+        models_dir = "models"
         os.makedirs(models_dir, exist_ok=True)
 
         # Save model with run_name, round, and AUROC encoded in filename
@@ -130,8 +128,8 @@ def save_best_model(arrays, agg_metrics, server_round, run_name, best_auroc):
         model_filename = f"{run_name}_round{server_round}_auroc{auroc_str}.pt"
         model_path = os.path.join(models_dir, model_filename)
         torch.save(arrays.to_torch_state_dict(), model_path)
-
         log(INFO, f"  Model saved to {model_path}")
+
 
         # Also log to W&B if active
         if wandb.run is not None:
@@ -162,15 +160,15 @@ def save_local_model(arrays, local_metric, server_round, run_name, hospital_id):
     log(INFO, f"✓ New local model! Round {server_round}, AUROC: {current_auroc:.4f}")
 
     # Create models directory (relative to working directory, in scratch during SLURM jobs)
-    models_dir = LOCAL_MODELS_DIR
+    models_dir = "local_models"
     os.makedirs(models_dir, exist_ok=True)
 
     # Save model with run_name, round, and AUROC encoded in filename
     auroc_str = f"{int(current_auroc * 10000):04d}"
     model_filename = f"{run_name}_{hospital_id}_round{server_round}_auroc{auroc_str}.pt"
     model_path = os.path.join(models_dir, model_filename)
+    log(INFO, f"  Saving model to {model_path}")
     torch.save(arrays.to_torch_state_dict(), model_path)
-
     log(INFO, f"  Model saved to {model_path}")
 
     # Also log to W&B if active
