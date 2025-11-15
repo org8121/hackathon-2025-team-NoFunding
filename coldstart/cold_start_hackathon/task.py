@@ -4,10 +4,11 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 import torchvision.models as models
+from torchvision.models import DenseNet121_Weights
 from tqdm import tqdm
 
 hospital_datasets = {}  # Cache loaded hospital datasets
@@ -19,7 +20,7 @@ class Net(nn.Module):
     def __init__(self):
         super().__init__()
         # Load ImageNet-pretrained DenseNet-121
-        self.model = models.densenet121(pretrained=True)
+        self.model = models.densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1)
         
         # IMPORTANT: Save original conv0 weights before replacement
         original_conv = self.model.features.conv0
@@ -154,7 +155,7 @@ def train(
     )
     
     # Mixed precision scaler for memory efficiency
-    scaler = GradScaler() if use_amp else None
+    scaler = torch.amp.GradScaler('cuda') if use_amp else None
     
     net.train()
     running_loss = 0.0
@@ -169,7 +170,7 @@ def train(
             
             if use_amp:
                 # Mixed precision forward pass
-                with autocast():
+                with torch.amp.autocast('cuda'):
                     outputs = net(x)
                     loss = criterion(outputs, y)
                 
@@ -227,7 +228,7 @@ def test(net, testloader, device, use_amp=True):
             y = batch["y"].to(device)
             
             if use_amp:
-                with autocast():
+                with torch.amp.autocast('cuda'):
                     outputs = net(x)
                     loss = criterion(outputs, y)
             else:

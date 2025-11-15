@@ -46,12 +46,12 @@ clientapp = "cold_start_hackathon.client_app:app"
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
 # Image settings
-image-size = 224  # Image size (128 or 224)
+image-size = 128  # Image size (128 or 224)
 
 # Training hyperparameters - OPTIMIZED
-num-server-rounds = 6  # Slurm processes are capped to 15min
+num-server-rounds = 5  # Slurm processes are capped to 15min
 local-epochs = 1
-batch-size = 32  # With AMP, fits in 4-5 GB per client
+batch-size = 128  # With AMP, fits in 4-5 GB per client
 lr = 0.005
 
 # Memory and speed optimizations - CRITICAL
