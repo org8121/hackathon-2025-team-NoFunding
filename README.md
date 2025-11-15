@@ -6,6 +6,8 @@
 
 ## The Challenge
 
+**Our model achieves 0.754 AUROC**
+
 Healthcare institutions face a critical dilemma: they need large datasets to train accurate AI models for chest X-ray diagnosis, but patient privacy regulations prevent data sharing. This is particularly problematic when hospitals have different equipment and patient populations, creating heterogeneous, non-IID data distributions that traditional machine learning cannot handle effectively.
 
 ## Our Solution
