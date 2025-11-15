@@ -38,6 +38,7 @@ def main(grid: Grid, context: Context) -> None:
     num_rounds: int = context.run_config["num-server-rounds"]
     lr: float = context.run_config["lr"]
     local_epochs: int = context.run_config["local-epochs"]
+    proximal_mu: float = context.run_config.get("proximal-mu", 0.0)
 
     # Get run name from environment variable (set by submit-job.sh). Feel free to change this.
     run_name = os.environ.get("JOB_NAME", "your_custom_run_name")
@@ -54,6 +55,7 @@ def main(grid: Grid, context: Context) -> None:
                 "num_rounds": num_rounds,
                 "learning_rate": lr,
                 "local_epochs": local_epochs,
+                "proximal_mu": proximal_mu,
             }
         )
         log(INFO, "Wandb initialized with run_id: %s", wandb.run.id)
@@ -63,11 +65,12 @@ def main(grid: Grid, context: Context) -> None:
     global_model = Net()
     arrays = ArrayRecord(global_model.state_dict())
 
-    strategy = HackathonFedAvg(fraction_train=1, run_name=run_name)
+    strategy = HackathonFedProx(fraction_train=1, run_name=run_name, proximal_mu=proximal_mu, fraction_evaluate=1.0, min_available_nodes=3, min_train_nodes=3, min_evaluate_nodes=3)
+    
     result = strategy.start(
         grid=grid,
         initial_arrays=arrays,
-        train_config=ConfigRecord({"lr": lr, "local_epochs": local_epochs}),
+        train_config=ConfigRecord({"lr": lr, "local_epochs": local_epochs, "proximal_mu": proximal_mu}),
         num_rounds=num_rounds,
     )
 
@@ -77,13 +80,14 @@ def main(grid: Grid, context: Context) -> None:
         log(INFO, "Wandb run finished")
 
 
-class HackathonFedAvg(FedAvg):
-    """FedAvg strategy that logs metrics and saves best model to W&B."""
+class HackathonFedProx(FedAvg):
+    """FedProx strategy that logs metrics and saves best model to W&B."""
 
-    def __init__(self, *args, run_name=None, **kwargs):
+    def __init__(self, *args, run_name=None, proximal_mu=0.0, **kwargs):
         super().__init__(*args, **kwargs)
         self._best_auroc = None
         self._run_name = run_name or "your_run"
+        self._proximal_mu = proximal_mu
 
     def aggregate_train(self, server_round, replies):
         arrays, metrics = super().aggregate_train(server_round, replies)

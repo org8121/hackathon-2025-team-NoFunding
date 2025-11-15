@@ -107,7 +107,16 @@ def load_data(
     return dataloader
 
 
-def train(net, trainloader, epochs, lr, device, freeze_backbone=False, local_model_path=None):
+def train(
+    net,
+    trainloader,
+    epochs,
+    lr,
+    device,
+    freeze_backbone=False,
+    local_model_path=None,
+    proximal_mu=0.0,
+):
     net.to(device)
     pos_weight = 0.9
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
@@ -127,6 +136,14 @@ def train(net, trainloader, epochs, lr, device, freeze_backbone=False, local_mod
     if should_save_local:
         os.makedirs(os.path.dirname(local_model_path), exist_ok=True)
 
+    reference_params = None
+    if proximal_mu > 0:
+        reference_params = {
+            name: param.detach().clone()
+            for name, param in net.named_parameters()
+            if param.requires_grad
+        }
+
     for epoch_idx in range(epochs):
         for batch in tqdm(trainloader):
             x = batch["x"].to(device)
@@ -134,6 +151,13 @@ def train(net, trainloader, epochs, lr, device, freeze_backbone=False, local_mod
             optimizer.zero_grad()
             outputs = net(x)
             loss = criterion(outputs, y)
+            if proximal_mu > 0 and reference_params is not None:
+                prox_term = torch.tensor(0.0, device=device)
+                for name, param in net.named_parameters():
+                    if not param.requires_grad:
+                        continue
+                    prox_term = prox_term + torch.sum((param - reference_params[name]) ** 2)
+                loss = loss + (proximal_mu / 2.0) * prox_term
             loss.backward()
             optimizer.step()
             running_loss += loss.item()

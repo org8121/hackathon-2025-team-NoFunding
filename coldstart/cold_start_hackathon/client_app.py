@@ -33,6 +33,7 @@ def train(msg: Message, context: Context):
     dataset_name = f"Hospital{PARTITION_HOSPITAL_MAP[partition_id]}"
     image_size = context.run_config["image-size"]
     trainloader = load_data(dataset_name, "train", image_size=image_size)
+    proximal_mu = msg.content["config"].get("proximal_mu", 0.0)
 
     # Determine if the backbone should be frozen for this round
     total_rounds = context.run_config["num-server-rounds"]
@@ -58,6 +59,7 @@ def train(msg: Message, context: Context):
         device,
         freeze_backbone=freeze_backbone,
         local_model_path=local_model_path,
+        proximal_mu=proximal_mu,
     )
 
     # Construct and return reply Message
